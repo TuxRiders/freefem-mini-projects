@@ -1,0 +1,56 @@
+load "PETSc"
+macro dimension()3// EOM
+include "macro_ddm.idp"
+
+func k = 5000.0;
+real tEnd = 20.;
+real dt = 0.1;
+real u0 = 0;
+real uIn = 20;
+real uOut = -20;
+
+// Mesh
+if (mpirank == 0)
+  mesh3 Mesh = readmesh3("helix.mesh");
+broadcast(processor(0), Mesh);
+
+// Fespace
+fespace SpaceP1(Mesh, P1);
+SpaceP1 u = u0, v, uold;
+
+// Problem
+varf thermic(u, v)
+    = int3d(Mesh)(
+          u*v/dt
+        + k*(dx(u)*dx(v) + dy(u)*dy(v) + dz(u)*dz(v))
+    )
+    + int3d(Mesh)(
+          uold*v/dt
+    )
+    + on(12, u=uIn)
+    + on(10, u=uOut);
+
+// Au = b
+Mat A;
+createMat(Mesh, A, P1);
+set(A, sparams="-pc_type hypre");
+real[int] b(SpaceP1.ndof);
+
+int count = 0;
+
+u = u;
+
+// Time iterations
+for(real t = 0; t < tEnd; t += dt)
+{
+    if (mpirank == 0)
+      cout << "Solving iteration #" << count << endl;
+    uold = u;
+    A = thermic(SpaceP1, SpaceP1);
+    b = thermic(0, SpaceP1);
+    u[] = A^-1 * b;
+
+    if (count % 3 == 0)
+      savevtk("output-parallel/output.vtu", Mesh, u, append = count ? true : false);
+    count++;
+}
